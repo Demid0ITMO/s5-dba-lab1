@@ -16,6 +16,7 @@ create or replace procedure get_table_info(full_table_name text)
     language plpgsql as $$
     declare
         table_oid oid;
+        database_name text;
         schema_name text;
         table_name text;
         row record;
@@ -23,25 +24,48 @@ create or replace procedure get_table_info(full_table_name text)
         descr record;
         con record;
         splitter text = '+-------+---------------------+-------------------';
+        query text;
+        query_result record;
     begin
-        schema_name := split_part(full_table_name, '.', 1);
-        table_name := split_part(full_table_name, '.', 2);
+        database_name := split_part(full_table_name, '.', 1);
+        schema_name := split_part(full_table_name, '.', 2);
+        table_name := split_part(full_table_name, '.', 3);
     
-        if table_name is null or table_name = '' then
-            raise notice 'Схема не указана. Поиск в текущей схеме';
-            table_name := schema_name;
-            schema_name := "current_schema"();
+        if table_name='' or table_name is null then
+            if schema_name = '' or schema_name is null then
+                raise notice 'Схема не указана';
+                table_name := database_name;
+                schema_name := null;
+            else
+                table_name := schema_name;
+                schema_name := database_name;
+            end if;
+            database_name := current_database();
         end if;
 
-        select pg_class.oid into table_oid 
-        from pg_class
-        join pg_namespace 
-            on pg_class.relnamespace = pg_namespace.oid
-        where pg_class.relname=table_name
-            and pg_namespace.nspname=schema_name;
+        if database_name != current_database() then
+            raise exception 'Нельзя получать информацию о таблице из другой БД.';
+        end if;
+    
+        query := 'select pg_class.oid oid, pg_namespace.nspname schema_name
+                  from pg_class
+                  join pg_namespace
+                      on pg_class.relnamespace = pg_namespace.oid
+                  where pg_class.relname= $1';
+    
+        if schema_name is not null then
+            query := query || ' and pg_namespace.nspname= $2;';
+            execute query into query_result using table_name, schema_name;
+        else
+            query := query || ';';
+            execute query into query_result using table_name;
+        end if;
+
+        table_oid := query_result.oid;
+        schema_name := query_result.schema_name;
 
         if table_oid is null then
-            raise exception 'Таблица "%" не найдена в схеме "%".', table_name, schema_name;
+            raise exception 'Таблица "%" не найдена', full_table_name;
         end if;
 
         raise notice 'Схема: %, Таблица: %', schema_name, table_name;
@@ -116,12 +140,11 @@ $$;
 ```postgresql
 call get_table_info('s367522.object');
 call get_table_info('ldaflsldfla.lasdfl');
-call get_table_info('human');
 call get_table_info('..');
-call get_table_info('pg_catalog.pg_attribute');
-call get_table_info('departments');
+call get_table_info('studs.s367522.employees');
+call get_table_info('ucheb.s367522.employees');
 call get_table_info('s367522.employees');
-call get_table_info('projects');
+call get_table_info('employees');
 ```
 
 ### Документация
